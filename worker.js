@@ -1,32 +1,98 @@
 export default {
-  async fetch(req, env) {
-    if (req.method !== 'POST') {
-      return new Response('Not allowed', { status: 405 });
+  async fetch(request, env) {
+
+    // --- CORS プリフライト対応 ---
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders()
+      });
     }
 
-    const { url } = await req.json();
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", {
+        status: 405,
+        headers: corsHeaders()
+      });
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid JSON" }, 400);
+    }
+
+    const url = body.url;
+    if (!url || !url.startsWith("http")) {
+      return json({ error: "Invalid URL" }, 400);
+    }
 
     // 1. HTML取得
-    const html = await fetch(url).then(r => r.text());
+    let html;
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "URL-Summarizer-Prototype"
+        }
+      });
+      html = await res.text();
+    } catch {
+      return json({ error: "Failed to fetch target URL" }, 500);
+    }
 
-    // 2. 超簡易本文抽出（PoC用）
-    const text = html
-      .replace(/<script[\s\S]*?<\/script>/g, '')
-      .replace(/<style[\s\S]*?<\/style>/g, '')
-      .replace(/<[^>]+>/g, '')
-      .slice(0, 3000);
+    // 2. タイトル抽出
+    const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+    const title = titleMatch
+      ? decode(titleMatch[1]).slice(0, 80)
+      : "No title";
 
-    // 3. LLM要約（ダミー or 無料API）
-    const summary = text.split('\n').slice(0,5).join(' ');
+    // 3. 本文抽出（軽量・安全）
+    const text = decode(
+      html
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+    ).slice(0, 3000);
 
-    const result = {
-      url,
-      title: text.slice(0,40),
-      summary
-    };
+    // 4. 仮要約（LLMなし）
+    const summary =
+      text.split("。").slice(0, 4).join("。") + "。";
 
-    return new Response(JSON.stringify(result), {
-      headers: { 'Content-Type': 'application/json' }
+    return json({
+      title,
+      summary,
+      url
     });
   }
 };
+
+// ---------- utility ----------
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+}
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...corsHeaders()
+    }
+  });
+}
+
+function decode(str) {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'");
+}
