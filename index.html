@@ -12,6 +12,7 @@ button { padding:8px 12px; }
   border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,.1);
 }
 small { color:#666; }
+pre { white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -24,21 +25,62 @@ small { color:#666; }
 <div id="result"></div>
 
 <script>
-async function submitURL() {
-  const url = document.getElementById('url').value;
-  const res = await fetch('https://YOUR_WORKER_URL/summarize', {
-    method: 'POST',
-    body: JSON.stringify({ url })
-  });
-  const data = await res.json();
+// ★ここを自分のWorkerに置き換え（末尾スラッシュ無し推奨）
+const WORKER_BASE = "https://YOUR_WORKER_URL"; 
+// 例: "https://url-summarizer-kgninja.yourname.workers.dev"
 
-  document.getElementById('result').innerHTML = `
-    <div class="card">
-      <h3>${data.title}</h3>
-      <p>${data.summary}</p>
-      <small>${data.url}</small>
-    </div>
-  `;
+async function submitURL() {
+  const url = document.getElementById('url').value.trim();
+  const result = document.getElementById('result');
+  result.innerHTML = `<div class="card"><p>送信中...</p></div>`;
+
+  try {
+    // /summarize を受けるWorkerにした前提。もしWorkerが / だけなら "/summarize" を外す。
+    const endpoint = WORKER_BASE.replace(/\/$/, "") + "/summarize";
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }, // ★追加
+      body: JSON.stringify({ url }),
+    });
+
+    const raw = await res.text(); // ★まずテキストで受けて原因可視化
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}\n${raw}`);
+    }
+
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      throw new Error(`JSON parse failed\n${raw}`);
+    }
+
+    result.innerHTML = `
+      <div class="card">
+        <h3>${escapeHtml(data.title ?? "(no title)")}</h3>
+        <p>${escapeHtml(data.summary ?? "(no summary)")}</p>
+        <small>${escapeHtml(data.url ?? url)}</small>
+      </div>
+    `;
+  } catch (e) {
+    result.innerHTML = `
+      <div class="card">
+        <h3>エラー</h3>
+        <pre>${escapeHtml(String(e))}</pre>
+        <p><small>WORKER: ${escapeHtml(WORKER_BASE)}</small></p>
+      </div>
+    `;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 </script>
 
